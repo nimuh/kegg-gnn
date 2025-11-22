@@ -8,8 +8,10 @@ from graphein.protein.config import ProteinGraphConfig
 from graphein.protein.edges.distance import add_distance_threshold, add_k_nn_edges
 from graphein.protein.graphs import construct_graph
 from graphein.ml.conversion import GraphFormatConvertor
+from torch_geometric.utils import subgraph
 import torch
 from torch_geometric.loader import DataLoader
+from torch_geometric.nn.models import GAT
 from typing import List, Optional
 import os
 from functools import partial
@@ -122,7 +124,8 @@ def create_protein_graphs(pdb_codes: List[str],
             "coords",       # Node input feature: 3D coordinates (structure)
             "residue_name", # Target feature: 3-letter amino acid code
             "b_factor",     # Optional scalar feature 1
-            "meiler"        # Optional scalar feature 2 (Physiochemical properties)
+            "meiler",        # Optional scalar feature 2 (Physiochemical properties)
+            "edge_index"
         ] 
     )
 
@@ -156,7 +159,8 @@ def create_protein_graphs(pdb_codes: List[str],
                     if not valid_indices:
                         print(f"Warning: Skipping {pdb_code} due to no valid canonical residues.")
                         continue
-                    
+
+
                     # 3. Use the indices for the target (data.y)
                     data.y = torch.tensor([targets[i] for i in valid_indices], dtype=torch.long)
                     
@@ -169,7 +173,8 @@ def create_protein_graphs(pdb_codes: List[str],
                     # --- Inverse Folding Input Feature Definition ---
                     # data.x: The input features (Structure)
                     # For a simple structural input, we use the coordinates.
-                    data.x = data.coords # [num_nodes, 3] tensor
+                    data.x = torch.cat((data.coords, data.meiler), dim=-1) # [num_nodes, 3] tensor
+                    data.x = data.x.to(torch.float32)
                     
                     graphs.append(data)
                 
@@ -191,6 +196,13 @@ def read_ko_entries(file):
 def main():
     
     
+    model = GAT(
+        in_channels=10,
+        hidden_channels=64,
+        num_layers=3,
+        out_channels=len(AA_3_TO_INDEX),
+
+    )
 
     # Subset of PDB IDs to process
     target_pdbs = ["3eiy", 
@@ -213,26 +225,18 @@ def main():
 
     # Create a PyTorch Geometric DataLoader
     loader = DataLoader(dataset, batch_size=2, shuffle=True)
-    
-    print("\n--- Inverse Folding Dataset Ready ---")
-    print(f"Created dataset with {len(dataset)} graphs.")
-    
-    # Inspect the first graph's features and target
-    first_graph = dataset[0]
-    print(f"\nExample Graph ({target_pdbs[0]}):")
-    print(f"  - Number of residues: {first_graph.num_nodes}")
-    print(f"  - Input Feature shape (x, structure coords): {first_graph.x.shape}")
-    print(f"  - Target Label shape (y, AA indices): {first_graph.y.shape}")
-    print(f"  - Target Sample (first 5 AA indices): {first_graph.y[:5]}")
-    
+    loss_fn = torch.nn.CrossEntropyLoss()
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-6)
+
     # Simulate a training loop
-    for batch_idx, batch in enumerate(loader):
-        print(f"\nBatch {batch_idx}:")
-        print(f"  - Batch shape: {batch}")
-        print(f"  - Total nodes in batch: {batch.num_nodes}")
-        print(f"  - Input structure features (x) shape: {batch.x.shape}")
-        print(f"  - Target sequence (y) shape: {batch.y.shape}")
-        # Here, you would pass 'batch' to your GNN, which would predict the sequence logits.
+    for _ in range(100):
+        for batch_idx, batch in enumerate(loader):
+            pred = model(x=batch.x, edge_index=batch.edge_index)
+            loss = loss_fn(pred, batch.y)
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+            print(loss.item())
 
 if __name__ == "__main__":
     main()
