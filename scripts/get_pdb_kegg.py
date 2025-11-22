@@ -173,7 +173,9 @@ def create_protein_graphs(pdb_codes: List[str],
                     # --- Inverse Folding Input Feature Definition ---
                     # data.x: The input features (Structure)
                     # For a simple structural input, we use the coordinates.
-                    data.x = torch.cat((data.coords, data.meiler), dim=-1) # [num_nodes, 3] tensor
+                    #print(data.b_factor.unsqueeze(-1).shape)
+                    data.x = torch.cat((data.coords, data.meiler, data.b_factor.unsqueeze(-1)), dim=-1) # [num_nodes, 3] tensor
+                    #print(data.x.shape)
                     data.x = data.x.to(torch.float32)
                     
                     graphs.append(data)
@@ -197,9 +199,9 @@ def main():
     
     
     model = GAT(
-        in_channels=10,
-        hidden_channels=64,
-        num_layers=3,
+        in_channels=11,
+        hidden_channels=16,
+        num_layers=16,
         out_channels=len(AA_3_TO_INDEX),
 
     )
